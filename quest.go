@@ -1,3 +1,5 @@
+// Port to Golang by Ali Azam <azam.vw@gmail.com>.
+
 package main
 
 import (
@@ -19,25 +21,26 @@ type question struct {
 
 var rights, wrongs int
 
+// penalty is the number of times an incorrect problem is repeated when penalised.
+const penalty = 5
+
 // penalised contains questions that have been answered incorrectly.
 var penalised = make(map[string][]question)
 
-const penalty = 5
-
+// ask poses a question to the player using the given operands and range.
+//
+// In accordance to the design of the original versions, the player must figure out the right
+// answer themselves to progress.
 func ask(ops []string, maxRange int) error {
 	op := ops[rand.Intn(len(ops))]
 	q := quest(op, maxRange)
 	start := time.Now()
 	fmt.Print(q.prompt)
 
-	// Add an offset to the penalty per question.
-	//
-	// This ensures that answering a question incorrectly multiple times in a row doesn't
-	// lead to TOO many penalties.
-	//
-	// But...maybe it should?
-	offset := 1
+	// Offsets the penalty each time. This ensures that problems gotten incorrect in a row aren't
+	// too severely penalised.
 	p := penalty
+	offset := 1
 
 	for {
 		var c int
@@ -64,24 +67,27 @@ func ask(ops []string, maxRange int) error {
 		fmt.Println("What?")
 		wrongs++
 
-		// Add question to slice of penalised questions for this op.
+		// Add question to penalised questions for this op.
 		for i := 0; i < p; i++ {
 			penalised[op] = append(penalised[op], q)
 		}
 		p -= offset
-		offset++
+		offset += 1
 	}
 	dur += time.Since(start)
 	return nil
 }
 
+// quest constructs a question using the given operand and range.
+//
+// If you get a question wrong, it is penalised. Penalised questions are repeated a set number of
+// times (penalty) before being forgiven.
 func quest(op string, maxRange int) question {
 	// TODO make incrementally more likely
 	// one-third chance if few penalised questions
 	// 50-50 chance if there are too many penalised questions
 	l := len(penalised[op])
-	r := l / maxRange
-	if l > 0 && ((r < 1.0 && rand.Intn(3) == 0) || rand.Intn(2) == 0) {
+	if l > 0 && rand.Intn(maxRange) == 0 {
 		var q question
 		penalised[op], q = pop(penalised[op], rand.Intn(l))
 		return q
@@ -106,7 +112,7 @@ func quest(op string, maxRange int) question {
 	case "/", "÷":
 		// TODO possibly add a "strict" mode which requires entering answer correct to 1 dp
 		// at least if it is enabled
-		mr := int(math.Sqrt(float64(maxRange))) // modified range
+		mr := int(math.Sqrt(float64(maxRange)))
 		b = rand.Intn(mr)
 		answer = rand.Intn(mr)
 		a = b*answer + rand.Intn(b-1)
@@ -114,6 +120,7 @@ func quest(op string, maxRange int) question {
 	return question{fmt.Sprintf("%d %s %d =  ", a, op, b), answer}
 }
 
+// stats prints statistics on the performance so far.
 func stats() {
 	quests := wrongs + rights
 	if quests < 1 {

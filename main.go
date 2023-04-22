@@ -1,12 +1,14 @@
-// https://github.com/jsm28/bsd-games/blob/master/arithmetic/arithmetic.c
+// Port to Golang by Ali Azam <azam.vw@gmail.com>.
 
 package main
 
 import (
+	"flag"
 	"fmt"
-	"math"
 	"math/rand"
-	"strconv"
+	"os"
+	"os/signal"
+	"strings"
 	"time"
 )
 
@@ -14,82 +16,104 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
+// Questions asked in one go will be between minQuests and maxQuests inclusive.
 const (
-	maxN = 30
-	minN = 15
+	minQuests = 15
+	maxQuests = 30
 )
 
-var operands = []string{"+", "-", "x", "/"}
+var (
+	ops        = []string{"+", "-", "x", "/"}
+	opsList    = strings.Join(ops, "")
+	opsDefault = []string{"+", "-"}
+	opsUni     = []string{"×", "÷"}
+	convertUni = map[string]string{"x": "×", "/": "÷"}
 
-func main() {
-	for {
-		start := time.Now()
-		n := rand.Intn(maxN-minN) + minN // Number of questions asked.
-		var wrongs int
+	flagRange = flag.Int("r", 10, "range")
+	flagOps   = flag.String("o", strings.Join(opsDefault, ""), opsList)
+	flagUni   = flag.Bool("u", false, "unicode")
+)
 
-		for i := 0; i < n; i++ {
-			a, b := rand.Intn(20), rand.Intn(20)
-
-			if b > a {
-				a, b = b, a
-			}
-
-			op := operands[rand.Intn(len(operands))]
-			if b == 0 {
-				op = operands[rand.Intn(len(operands)-1)]
-			}
-			var answer int
-
-			switch op {
-			case "+":
-				answer = a + b
-			case "-":
-				answer = a - b
-			case "×":
-				answer = a * b
-			case "/":
-				answer = int(a / b)
-			}
-
-			var w bool
-			fmt.Printf("%d %s %d =  ", a, op, b)
-			for i := readInt(); i != answer; {
-				fmt.Println("What?")
-				i = readInt()
-				w = true
-			}
-			fmt.Println("Correct!")
-
-			if w {
-				wrongs++
-			}
-		}
-		rights := n - wrongs
-		percent := int(math.Round(float64(rights)/float64(n)) * 100)
-		fmt.Printf("\nRights %d; Wrongs %d; Score %d%%\n", rights, wrongs, percent)
-
-		total := int(math.Round(time.Since(start).Seconds()))
-		per := float64(total / n)
-		fmt.Printf("Total time %d seconds; %.1f seconds per problem\n", total, per)
-
-		fmt.Println("\nPress RETURN to continue")
-		fmt.Scanln()
-	}
+func usage() {
+	fmt.Fprintf(os.Stderr, "Usage: %s [-o %s] [-r range] [-u unicode]\n", os.Args[0], opsList)
+	os.Exit(2)
 }
 
-func readInt() int {
-	var a string
+// Duration of time spent answering questions.
+var dur time.Duration
 
-scan:
-	_, err := fmt.Scan(&a)
-	if err != nil {
-		goto scan
+func main() {
+	flag.Usage = usage
+	flag.Parse()
+
+	var operands []string
+
+	for _, o := range *flagOps {
+		op := string(o)
+		if strings.Count(strings.Join(opsUni, ""), op) > 0 {
+			operands = append(operands, op)
+			*flagUni = true // Use unicode ops if these are provided in -o.
+			continue
+		}
+		if strings.Count(opsList, op) < 1 {
+			fmt.Fprintf(os.Stderr, "arithmetic: unknown key.\n")
+			usage()
+		}
+		operands = append(operands, op)
 	}
 
-	i, err := strconv.Atoi(a)
-	if err != nil {
-		fmt.Println("Please enter a number.")
-		goto scan
+	for _, op := range operands {
+		penalised[op] = []question{}
 	}
-	return i
+
+	// Convert operands to Unicode if required.
+	if *flagUni {
+		for i, op := range operands {
+			if u, ok := convertUni[op]; ok {
+				operands[i] = u
+			}
+		}
+	}
+
+	lr := int(^uint(0) >> 1) // Largest range we can accept.
+	if *flagRange < 0 || *flagRange > lr {
+		fmt.Fprintf(os.Stderr, "arithmetic: invalid range (0 < r < %d).\n", lr)
+		usage()
+	}
+	maxRange := *flagRange
+	if maxRange == 0 { // Someone's feeling adventurous.
+		maxRange = lr
+		fmt.Printf("Warning: numbers can get as high as %d!\n", lr)
+		fmt.Println("Press ENTER to continue...")
+		fmt.Scanln()
+		fmt.Println()
+	}
+
+	// Handle keyboard interrupts in a separate goroutine.
+	//
+	// Much like the previous versions, once interrupted, arithmetic prints out performance
+	// statistics before exiting.
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		for _ = range c {
+			stats()
+			fmt.Println()
+			os.Exit(0)
+		}
+	}()
+
+	for {
+		quests := rand.Intn(maxQuests-minQuests) + minQuests
+		for i := 0; i < quests; i++ {
+			if err := ask(operands, maxRange); err != nil { // Could be anything.
+				fmt.Fprintf(os.Stderr, "arithmetic: error: %s\n", err)
+				os.Exit(1)
+			}
+		}
+		stats()
+		fmt.Print("Press ENTER to continue...\n")
+		fmt.Scanln()
+		fmt.Println()
+	}
 }
